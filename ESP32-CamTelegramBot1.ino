@@ -59,6 +59,11 @@ Preferences prefs;
 void startCameraServer();
 // Wifi network station credentials
 #include "passwords.h"
+//#define WIFI_SSID ""
+//#define WIFI_PASSWORD ""
+//#define BOT_TOKEN ""
+//String chatadmin = "";
+//String chatId = "";
 bool sendPhotos = true;
 #define FLASH_LED_PIN 4
 struct tm timeinfo;
