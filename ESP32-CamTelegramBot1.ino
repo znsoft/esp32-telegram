@@ -115,6 +115,8 @@ void setupperf(String setValue) {
 
 
 
+
+
 void updateFW(String urlfile) {
   if (isUpdated == false)return;
   isUpdated = false;
@@ -458,10 +460,15 @@ void SendMotion() {
 
 void loop()
 {
+
+  if(WiFi.status() != WL_CONNECTED)ESP.restart();
   if (isRestart)ESP.restart();
   SendMotion();
   if (millis() - bot_lasttime > BOT_MTBS)
   {
+
+  
+    
     //SendMotion();
     int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
     while (numNewMessages)
@@ -473,6 +480,8 @@ void loop()
 
 
     }
+
+    if(!bot.getMe())ESP.restart();//ping 
 
     bot_lasttime = millis();
   }
