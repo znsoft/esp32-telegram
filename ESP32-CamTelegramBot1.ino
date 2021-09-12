@@ -90,7 +90,7 @@ String getCurrentDateTimeToString();
 bool dataAvailable = false;
 // Motion Sensor
 bool motionDetected = false;
-
+bool ishwMotion = true;
 bool isUpdated = false;
 bool isRestart = false;
 bool debugToadmin = false;
@@ -145,12 +145,12 @@ void updateFW(String urlfile) {
 void bot_setup()
 {
   const String commands = F("["
-                            //"{\"command\":\"help\",  \"description\":\"Get bot usage help\"},"
+                            "{\"command\":\"help\",  \"description\":\"Get bot usage help\"},"
                             "{\"command\":\"start\", \"description\":\"Message sent when you open a chat with a bot\"},"
                             "{\"command\":\"photo\",\"description\":\"Answer device current status\"}" // no comma on last command
                             "]");
   bot.setMyCommands(commands);
-  bot.sendMessage(chatadmin, "Start v1.2  " + getCurrentDateTimeToString(), "");
+  bot.sendMessage(chatadmin, "Start v1.3  " + getCurrentDateTimeToString(), "");
 }
 
 
@@ -211,8 +211,10 @@ void framesize(String value) {
 bool isSendedFromInt = false;
 // Indicates when motion is detected
 static void IRAM_ATTR detectsMovement(void * arg) {
+  //if(!ishwMotion)return;
   Serial.println("MOTION DETECTED!!!");
-  motionDetected = true;
+  
+  motionDetected = ishwMotion;
   if (debugToadmin && debugMotionDetect && isSendedFromInt == false) {
     isSendedFromInt = true;
     bot.sendMessage(chatadmin, ".", "");
@@ -250,6 +252,11 @@ void handleNewMessages(int numNewMessages)
         text.replace("/framesize", "");
         framesize(text);
       }
+      if (text == "/usehwmotion") {
+        ishwMotion = !ishwMotion;
+        bot.sendMessage(chatadmin, ishwMotion ? "On" : "Off", "");
+        
+        }
       if (text == "/debugled") {
         debugToLed = !debugToLed;
         bot.sendMessage(chatadmin, debugToLed ? "On" : "Off", "");
@@ -284,6 +291,7 @@ void handleNewMessages(int numNewMessages)
         welcome += "/debugadmin : echo bot messages\n";
         welcome += "/debugled : debug motion detect by led\n";
         welcome += "/setchanel : remember chat as master\n";
+        welcome += "/usehwmotion : use hardware motion detector or PIR sensor\n";
         welcome += "/framesize : and number 0 to 15\n";
         welcome += "/photo : will take a photo\n";
         welcome += "/flash : toggle flash LED (VERY BRIGHT!)\n";
