@@ -3,9 +3,20 @@
 #include "fd_forward.h"
 #include "fr_forward.h"
 
+camera_config_t config;
+
+void resetCam (byte tick)
+{
+ esp_camera_deinit();
+ digitalWrite(PWDN_GPIO_NUM,LOW);
+ delay (1);
+ digitalWrite(PWDN_GPIO_NUM,HIGH);
+ delay (tick);
+}
+
 bool setupCamera()
 {
-  camera_config_t config;
+  
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
   config.pin_d0 = Y2_GPIO_NUM;
@@ -32,6 +43,7 @@ bool setupCamera()
     config.frame_size = FRAMESIZE_UXGA; // FRAMESIZE_ + QVGA|CIF|VGA|SVGA|XGA|SXGA|UXGA
     config.jpeg_quality = 10;
     config.fb_count = 2;
+    currentfsize = FRAMESIZE_UXGA;
   }
   else
   {

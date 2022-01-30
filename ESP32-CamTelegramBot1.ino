@@ -27,6 +27,10 @@
 #include <Preferences.h>
 Preferences prefs;
 
+bool TBotNeedCamera;
+
+TaskHandle_t MotionTask, TelegramBotTask;
+SemaphoreHandle_t CameraReady;
 
 //#include "SPIFS.h"
 
@@ -50,11 +54,19 @@ Preferences prefs;
 
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
+#define TELEGRAM_DEBUG 1
 #include <UniversalTelegramBot.h>
 #include "esp_camera.h"
 #include <ArduinoJson.h>
+
+framesize_t currentfsize;
+camera_fb_t *fb = NULL;
+uint8_t* fb_buffer;
+size_t fb_length;
+
 #include "camera_pins.h"
 #include "camera_code.h"
+#include "motion.h"
 
 void startCameraServer();
 // Wifi network station credentials
@@ -66,8 +78,11 @@ void startCameraServer();
 //String chatId = "";
 bool sendPhotos = true;
 #define FLASH_LED_PIN 4
+
 struct tm timeinfo;
 time_t now;
+
+
 const unsigned long BOT_MTBS = 5500; // mean time between scan messages
 
 unsigned long bot_lasttime; // last time messages' scan has been done
@@ -76,27 +91,56 @@ UniversalTelegramBot bot(BOT_TOKEN, secured_client);
 
 bool flashState = LOW;
 
-camera_fb_t *fb = NULL;
-uint8_t* fb_buffer;
-size_t fb_length;
+
 int currentByte;
 
 bool isMoreDataAvailable();
 byte *getNextBuffer();
 int getNextBufferLen();
 uint8_t photoNextByte();
+
+#ifdef USETIMEZONE
 String getCurrentDateTimeToString();
+#endif
+void codeForMotionTask( void * parameter );
+void codeForTBotTask( void * parameter );
 
 bool dataAvailable = false;
 // Motion Sensor
 bool motionDetected = false;
 bool ishwMotion = true;
+bool isswMotion = true;
 bool isUpdated = false;
 bool isRestart = false;
 bool debugToadmin = false;
 bool debugToLed = false;
 bool debugMotionDetect = false;
 
+
+#ifdef USETIMEZONE
+void StartTime() {
+
+  //init_time();
+  time(&now);
+  setenv("TZ", "<+10>-10", 1);
+  tzset();
+  delay(1000);
+  time(&now);
+  Serial.print("After timezone : "); Serial.println(ctime(&now));
+
+}
+
+String getCurrentDateTimeToString() {
+
+  char strftime_buf[64];
+
+  time(&now);
+  localtime_r(&now, &timeinfo);
+
+  strftime(strftime_buf, sizeof(strftime_buf), "%F_%H_%M_%S", &timeinfo);
+  return String(strftime_buf);
+}
+#endif
 
 void setupperf(String setValue) {
   prefs.begin("chatid"); // use "schedule" namespace
@@ -115,10 +159,37 @@ void setupperf(String setValue) {
 
 
 
+void StartTasks() {
 
+  CameraReady = xSemaphoreCreateMutex();
+
+  xTaskCreatePinnedToCore(
+    codeForMotionTask,
+    "MotionTask",
+    10000,
+    NULL,
+    1,
+    &MotionTask,
+    0);
+
+  delay(500);
+
+  xTaskCreatePinnedToCore(
+    codeForTBotTask,
+    "TBotTask",
+    10000,
+    NULL,
+    2,
+    &TelegramBotTask,
+    1);
+
+  delay(500);
+
+}
 
 void updateFW(String urlfile) {
   if (isUpdated == false)return;
+  bot.sendMessage(chatadmin, "Start download file", "");
   isUpdated = false;
   Serial.println("Start update from " + urlfile);
   t_httpUpdate_return ret = httpUpdate.update(secured_client, urlfile);
@@ -131,12 +202,12 @@ void updateFW(String urlfile) {
 
     case HTTP_UPDATE_NO_UPDATES:
       Serial.println("HTTP_UPDATE_NO_UPDATES");
-       bot.sendMessage(chatadmin, "HTTP_UPDATE_NO_UPDATES", "");
+      bot.sendMessage(chatadmin, "HTTP_UPDATE_NO_UPDATES", "");
       break;
 
     case HTTP_UPDATE_OK:
       Serial.println("HTTP_UPDATE_OK");
-       bot.sendMessage(chatadmin, "HTTP_UPDATE_OK", "");
+      bot.sendMessage(chatadmin, "HTTP_UPDATE_OK", "");
       break;
   }
 
@@ -150,7 +221,8 @@ void bot_setup()
                             "{\"command\":\"photo\",\"description\":\"Answer device current status\"}" // no comma on last command
                             "]");
   bot.setMyCommands(commands);
-  bot.sendMessage(chatadmin, "Start v1.3  " + getCurrentDateTimeToString(), "");
+  bot.sendMessage(chatadmin, "Start v1.5  ", ""); //+" resetreason:"+(rtc_get_reset_reason(0)) , "");
+  // bot.sendMessage(chatadmin, "rtc_get_reset_reason(0)
 }
 
 
@@ -174,21 +246,21 @@ void sendPhoto(String chat_id) {
 
   dataAvailable = true;
   Serial.println("Sending");
-  bot.sendMessage(chat_id, getCurrentDateTimeToString(), "");
-  if(sendPhotos){
-  bot.sendMultipartFormDataToTelegram("sendPhoto", "photo", getCurrentDateTimeToString() + ".jpg",    "image/jpeg", chat_id, fb->len,
-                                      isMoreDataAvailable,
-                                      photoNextByte,
-                                      nullptr,
-                                      nullptr);
-                                      }else{
-  
-  bot.sendMultipartFormDataToTelegram("sendDocument", "document", getCurrentDateTimeToString() + ".jpg",    "image/jpeg", chat_id, fb->len,
-                                      isMoreDataAvailable,
-                                      photoNextByte,
-                                      nullptr,
-                                      nullptr);
-                                      }
+  //bot.sendMessage(chat_id, getCurrentDateTimeToString(), "");
+  if (sendPhotos) {
+    bot.sendMultipartFormDataToTelegram("sendPhoto", "photo",  "photo.jpg",    "image/jpeg", chat_id, fb->len,
+                                        isMoreDataAvailable,
+                                        photoNextByte,
+                                        nullptr,
+                                        nullptr);
+  } else {
+
+    bot.sendMultipartFormDataToTelegram("sendDocument", "document",  "photo.jpg",    "image/jpeg", chat_id, fb->len,
+                                        isMoreDataAvailable,
+                                        photoNextByte,
+                                        nullptr,
+                                        nullptr);
+  }
   /*photoNextByte
     bot.sendPhotoByBinary(chat_id, "image/jpeg", fb->len,
                         isMoreDataAvailable, nullptr,
@@ -202,10 +274,12 @@ void sendPhoto(String chat_id) {
 }
 
 void framesize(String value) {
-
+  xSemaphoreTake( CameraReady, portMAX_DELAY );
   int val = atoi(value.c_str());
   sensor_t * s = esp_camera_sensor_get();
   s->set_framesize(s, (framesize_t)val);
+  currentfsize = (framesize_t)val;
+  xSemaphoreGive( CameraReady );
 }
 
 bool isSendedFromInt = false;
@@ -213,7 +287,7 @@ bool isSendedFromInt = false;
 static void IRAM_ATTR detectsMovement(void * arg) {
   //if(!ishwMotion)return;
   Serial.println("MOTION DETECTED!!!");
-  
+
   motionDetected = ishwMotion;
   if (debugToadmin && debugMotionDetect && isSendedFromInt == false) {
     isSendedFromInt = true;
@@ -246,7 +320,10 @@ void handleNewMessages(int numNewMessages)
       if (text == "/setchanel")setupperf(chat_id);
     }
     if (chat_id == chatadmin && from_id == chatadmin) {
-
+      if (text.indexOf("/trashhold") >= 0) {
+        text.replace("/trashhold", "");
+        Image_thresholdL = atoi(text.c_str());;
+      }
 
       if (text.indexOf("/framesize") >= 0) {
         text.replace("/framesize", "");
@@ -255,8 +332,15 @@ void handleNewMessages(int numNewMessages)
       if (text == "/usehwmotion") {
         ishwMotion = !ishwMotion;
         bot.sendMessage(chatadmin, ishwMotion ? "On" : "Off", "");
-        
-        }
+
+      }
+
+
+      if (text == "/useswmotion") {
+        isswMotion = !isswMotion;
+        bot.sendMessage(chatadmin, isswMotion ? "On" : "Off", "");
+
+      }
       if (text == "/debugled") {
         debugToLed = !debugToLed;
         bot.sendMessage(chatadmin, debugToLed ? "On" : "Off", "");
@@ -270,7 +354,10 @@ void handleNewMessages(int numNewMessages)
         bot.sendMessage(chatadmin, debugMotionDetect ? "On" : "Off", "");
       }
       if (text == "/restart" || text == "/reset")isRestart = true;
-      if (text == "/fw" || text == "/update") isUpdated = true;
+      if (text == "/fw" || text == "/update") {
+        isUpdated = true;
+        bot.sendMessage(chatadmin, "Ready to recv file for update firmware...", "");
+      }
       if (file_path != "")updateFW(bot.messages[i].file_path);
       if (text == "/flash")
       {
@@ -292,7 +379,9 @@ void handleNewMessages(int numNewMessages)
         welcome += "/debugled : debug motion detect by led\n";
         welcome += "/setchanel : remember chat as master\n";
         welcome += "/usehwmotion : use hardware motion detector or PIR sensor\n";
+        welcome += "/useswmotion : use software motion detector \n";
         welcome += "/framesize : and number 0 to 15\n";
+        welcome += "/trashhold : and number 0 to 100\n";
         welcome += "/photo : will take a photo\n";
         welcome += "/flash : toggle flash LED (VERY BRIGHT!)\n";
         bot.sendMessage(chat_id, welcome, "Markdown");
@@ -306,7 +395,7 @@ void handleNewMessages(int numNewMessages)
 
     }
 
-    if (text.indexOf("/start")>= 0)
+    if (text.indexOf("/start") >= 0)
     {
       String welcome = "Welcome to bot.\n\n";
       welcome += "/photo : will take a photo\n";
@@ -363,28 +452,6 @@ int getNextBufferLen()
   }
 }
 
-void StartTime() {
-
-  //init_time();
-  time(&now);
-  setenv("TZ", "<+10>-10", 1);
-  tzset();
-  delay(1000);
-  time(&now);
-  Serial.print("After timezone : "); Serial.println(ctime(&now));
-
-}
-
-String getCurrentDateTimeToString() {
-
-  char strftime_buf[64];
-
-  time(&now);
-  localtime_r(&now, &timeinfo);
-
-  strftime(strftime_buf, sizeof(strftime_buf), "%F_%H_%M_%S", &timeinfo);
-  return String(strftime_buf);
-}
 
 void setup()
 {
@@ -417,7 +484,7 @@ void setup()
   }
   Serial.print("\nWiFi connected. IP address: ");
   Serial.println(WiFi.localIP());
-
+#ifdef USETIMEZONE
   Serial.print("Retrieving time: ");
   configTime(0, 0, "pool.ntp.org"); // get UTC time via NTP
   now = time(nullptr);
@@ -430,9 +497,10 @@ void setup()
   StartTime();
   Serial.println(now);
   Serial.println(getCurrentDateTimeToString());
+#endif
   // Make the bot wait for a new message for up to 60seconds
-  bot.longPoll = 60;
-  startCameraServer();
+  bot.longPoll = 1;
+  //startCameraServer();
   bot_setup();
   // PIR Motion Sensor mode INPUT_PULLUP
   //err = gpio_install_isr_service(0);
@@ -449,48 +517,97 @@ void setup()
   }
   secured_client.setInsecure();
   //setupOTA();
-  startCameraServer();
-
-
+  //startCameraServer();
+  isMotionDetected(currentfsize);
+  //TRIGGERtimer = millis();
+  StartTasks();
 }
 
-void SendMotion() {
 
+
+
+void SendMotion() {
+  Serial.println("-");
+  //if (TBotNeedCamera)return;
+  //Serial.println("-");
   if (motionDetected) {
+    Serial.println("+");
+    TBotNeedCamera = true;
+    xSemaphoreTake( CameraReady, portMAX_DELAY );
+    returnTheCamera(currentfsize);
+
     if (debugToLed) {
       flashState = LOW;
       digitalWrite(FLASH_LED_PIN, flashState);
     }
     sendPhoto(chatId);
     motionDetected = false;
+    TBotNeedCamera = false;
+    xSemaphoreGive( CameraReady );
   }
 }
 
 void loop()
 {
 
-  if(WiFi.status() != WL_CONNECTED)ESP.restart();
-  if (isRestart)ESP.restart();
-  SendMotion();
-  if (millis() - bot_lasttime > BOT_MTBS)
-  {
 
-  
-    
-    //SendMotion();
-    int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
-    while (numNewMessages)
+  if (WiFi.status() != WL_CONNECTED)ESP.restart();
+  if (isRestart)ESP.restart();
+
+
+
+}
+
+
+
+
+void codeForMotionTask( void * parameter )
+{
+  for (;;) {
+    if (isswMotion)
+      if (!TBotNeedCamera) {
+        xSemaphoreTake( CameraReady, portMAX_DELAY );
+        motionDetected =  isMotionDetected(currentfsize);
+        if (motionDetected) TBotNeedCamera = true;
+        xSemaphoreGive( CameraReady );
+        //if (motionDetected && !TBotNeedCamera) SendMotion();
+      }
+    delay(1);
+  }
+}
+
+void codeForTBotTask( void * parameter )
+{
+
+
+
+  for (;;) {
+    SendMotion();
+    if (millis() - bot_lasttime > BOT_MTBS)
     {
 
-      Serial.println("got response");
-      handleNewMessages(numNewMessages);
-      numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+      Serial.println("getUpdates");
 
+      //SendMotion();
+      int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+      while (numNewMessages)
+      {
+        SendMotion();
+        Serial.print("numNewMessages=");
+        Serial.println(numNewMessages);
+        handleNewMessages(numNewMessages);
+        numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+        Serial.println ("NewMessages handled");
 
+      }
+
+      if (!bot.getMe()) {
+        Serial.println ("restart by bot.getMe()");   //ping
+        ESP.restart();
+      }
+
+      bot_lasttime = millis();
     }
-
-    if(!bot.getMe())ESP.restart();//ping 
-
-    bot_lasttime = millis();
+    delay(1);
   }
 }
