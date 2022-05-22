@@ -20,13 +20,15 @@
     Tindie: https://www.tindie.com/stores/brianlough/
     Twitter: https://twitter.com/witnessmenow
 *******************************************************************/
-
+//#define FORUPDATE 1
 // ----------------------------
 // Standard Libraries - Already Installed if you have ESP32 set up
 // ----------------------------
+#define USERGBMOTIONDETECT
+#ifndef FORUPDATE
 #include <Preferences.h>
 Preferences prefs;
-
+#endif
 bool TBotNeedCamera;
 
 TaskHandle_t MotionTask, TelegramBotTask;
@@ -39,7 +41,10 @@ SemaphoreHandle_t CameraReady;
    https://github.com/me-no-dev/arduino-esp32fs-plugin */
 //#define FORMAT_SPIFFS_IF_FAILED true
 //------- Replace the following! ------
-
+#ifdef FORUPDATE
+#undef USEWEBSERVER
+#undef USETIMEZONE
+#endif
 //#define CAMERA_MODEL_WROVER_KIT
 //#define CAMERA_MODEL_ESP_EYE
 //#define CAMERA_MODEL_M5STACK_PSRAM
@@ -49,40 +54,56 @@ SemaphoreHandle_t CameraReady;
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <WiFiUdp.h>
+#ifdef USEWEBSERVER
 #include <WebServer.h>
+#endif
 #include <HTTPUpdate.h>
 
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 #define TELEGRAM_DEBUG 1
 #include <UniversalTelegramBot.h>
+#ifndef FORUPDATE
 #include "esp_camera.h"
-#include <ArduinoJson.h>
-
 framesize_t currentfsize;
 camera_fb_t *fb = NULL;
 uint8_t* fb_buffer;
 size_t fb_length;
+#endif
+#include <ArduinoJson.h>
 
+
+#ifndef FORUPDATE
 #include "camera_pins.h"
 #include "camera_code.h"
+#ifdef USERGBMOTIONDETECT
+#include "motion2.h"
+#else
 #include "motion.h"
-
+#endif
+#endif
+#ifdef USEWEBSERVER
 void startCameraServer();
+#endif
+
 // Wifi network station credentials
 #include "passwords.h"
-//#define WIFI_SSID ""
-//#define WIFI_PASSWORD ""
-//#define BOT_TOKEN ""
-//String chatadmin = "";
-//String chatId = "";
+
 bool sendPhotos = true;
 #define FLASH_LED_PIN 4
 
 struct tm timeinfo;
 time_t now;
+#ifdef USEWDT
+#include <Ticker.h>
+// Loop WDT... please don't feed me...
+// See lwdtcb() and lwdtFeed() below
+Ticker lwdTimer;
+#define LWD_TIMEOUT   60000
 
-
+unsigned long lwdCurrentMillis = 0;
+unsigned long lwdTimeOutMillis = LWD_TIMEOUT;
+#endif
 const unsigned long BOT_MTBS = 5500; // mean time between scan messages
 
 unsigned long bot_lasttime; // last time messages' scan has been done
@@ -98,10 +119,12 @@ bool isMoreDataAvailable();
 byte *getNextBuffer();
 int getNextBufferLen();
 uint8_t photoNextByte();
+void  sendPhotoTask();
 
 #ifdef USETIMEZONE
 String getCurrentDateTimeToString();
 #endif
+
 void codeForMotionTask( void * parameter );
 void codeForTBotTask( void * parameter );
 
@@ -141,7 +164,7 @@ String getCurrentDateTimeToString() {
   return String(strftime_buf);
 }
 #endif
-
+#ifndef FORUPDATE
 void setupperf(String setValue) {
   prefs.begin("chatid"); // use "schedule" namespace
   if (setValue != "") {
@@ -157,12 +180,12 @@ void setupperf(String setValue) {
 
 }
 
-
+#endif
 
 void StartTasks() {
 
   CameraReady = xSemaphoreCreateMutex();
-
+#ifndef FORUPDATE
   xTaskCreatePinnedToCore(
     codeForMotionTask,
     "MotionTask",
@@ -173,7 +196,7 @@ void StartTasks() {
     0);
 
   delay(500);
-
+#endif
   xTaskCreatePinnedToCore(
     codeForTBotTask,
     "TBotTask",
@@ -221,11 +244,12 @@ void bot_setup()
                             "{\"command\":\"photo\",\"description\":\"Answer device current status\"}" // no comma on last command
                             "]");
   bot.setMyCommands(commands);
-  bot.sendMessage(chatadmin, "Start v1.5  ", ""); //+" resetreason:"+(rtc_get_reset_reason(0)) , "");
+
+  bot.sendMessage(chatadmin, "Start v1.95  "__DATE__, ""); //+" resetreason:"+(rtc_get_reset_reason(0)) , "");
   // bot.sendMessage(chatadmin, "rtc_get_reset_reason(0)
 }
 
-
+#ifndef FORUPDATE
 void sendPhoto(String chat_id) {
 
 
@@ -299,7 +323,7 @@ static void IRAM_ATTR detectsMovement(void * arg) {
     digitalWrite(FLASH_LED_PIN, flashState);
   }
 }
-
+#endif
 void handleNewMessages(int numNewMessages)
 {
   Serial.println("handleNewMessages");
@@ -316,10 +340,13 @@ void handleNewMessages(int numNewMessages)
     if (from_name == "")
       from_name = "Guest";
     if (debugToadmin)bot.sendMessage(chatadmin, chat_id + " " + from_name + " " + from_id + " " + text +  " " + file_path, "");
+#ifndef FORUPDATE
     if (chat_id != chatadmin && from_id == chatadmin) {
       if (text == "/setchanel")setupperf(chat_id);
     }
+#endif
     if (chat_id == chatadmin && from_id == chatadmin) {
+#ifndef FORUPDATE
       if (text.indexOf("/trashhold") >= 0) {
         text.replace("/trashhold", "");
         Image_thresholdL = atoi(text.c_str());;
@@ -329,6 +356,7 @@ void handleNewMessages(int numNewMessages)
         text.replace("/framesize", "");
         framesize(text);
       }
+
       if (text == "/usehwmotion") {
         ishwMotion = !ishwMotion;
         bot.sendMessage(chatadmin, ishwMotion ? "On" : "Off", "");
@@ -345,6 +373,7 @@ void handleNewMessages(int numNewMessages)
         debugToLed = !debugToLed;
         bot.sendMessage(chatadmin, debugToLed ? "On" : "Off", "");
       }
+#endif
       if (text == "/debugadmin") {
         debugToadmin = !debugToadmin;
         bot.sendMessage(chatadmin, debugToadmin ? "On" : "Off", "");
@@ -388,13 +417,16 @@ void handleNewMessages(int numNewMessages)
         return;
       }
     }
-
+#ifndef FORUPDATE
     if (text.indexOf("/photo") >= 0)
     {
-      sendPhoto(chat_id);
-
+      sendPhotoTask();
+      bot.sendMessage(chat_id,  "sending, wait...", "");
+      //xSemaphoreTake( CameraReady, portMAX_DELAY );
+      // sendPhoto(chat_id);
+      // xSemaphoreGive( CameraReady );
     }
-
+#endif
     if (text.indexOf("/start") >= 0)
     {
       String welcome = "Welcome to bot.\n\n";
@@ -404,7 +436,7 @@ void handleNewMessages(int numNewMessages)
     }
   }
 }
-
+#ifndef FORUPDATE
 bool isMoreDataAvailable() {
   return (fb_length - currentByte);
 }
@@ -451,6 +483,26 @@ int getNextBufferLen()
     return 0;
   }
 }
+#endif
+
+#ifdef USEWDT
+// Our new WDT to help prevent freezes
+// code concept taken from https://sigmdel.ca/michel/program/esp8266/arduino/watchdogs2_en.html
+void ICACHE_RAM_ATTR lwdtcb(void) {
+  if ((millis() - lwdCurrentMillis > LWD_TIMEOUT) || (lwdTimeOutMillis - lwdCurrentMillis != LWD_TIMEOUT)) ESP.restart();
+   // RestartESP("Loop WDT Failed!");
+}
+
+void lwdtFeed(void) {
+  lwdCurrentMillis = millis();
+  lwdTimeOutMillis = lwdCurrentMillis + LWD_TIMEOUT;
+}
+#endif
+
+void VerifyWifi() {
+  while (WiFi.status() != WL_CONNECTED || WiFi.localIP() == IPAddress(0, 0, 0, 0))
+    WiFi.reconnect();
+}
 
 
 void setup()
@@ -462,6 +514,7 @@ void setup()
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
   pinMode(FLASH_LED_PIN, OUTPUT);
   digitalWrite(FLASH_LED_PIN, flashState); //defaults to low
+#ifndef FORUPDATE
   setupperf("");
   if (!setupCamera())
   {
@@ -471,16 +524,24 @@ void setup()
       delay(100);
     }
   }
-
+#endif
   // attempt to connect to Wifi network:
   Serial.print("Connecting to Wifi SSID ");
   Serial.print(WIFI_SSID);
+//  WiFi.setSleepMode(WIFI_NONE_SLEEP);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   secured_client.setCACert(TELEGRAM_CERTIFICATE_ROOT); // Add root certificate for api.telegram.org
+  int i = 0;
   while (WiFi.status() != WL_CONNECTED)
   {
     Serial.print(".");
     delay(500);
+    i++;
+
+    if (i > 500) {
+      Serial.print("WIFI not found , restart");
+      ESP.restart();
+    }
   }
   Serial.print("\nWiFi connected. IP address: ");
   Serial.println(WiFi.localIP());
@@ -488,6 +549,7 @@ void setup()
   Serial.print("Retrieving time: ");
   configTime(0, 0, "pool.ntp.org"); // get UTC time via NTP
   now = time(nullptr);
+
   while (now < 24 * 3600)
   {
     Serial.print(".");
@@ -506,6 +568,7 @@ void setup()
   //err = gpio_install_isr_service(0);
   //gpio_pullup_dis(GPIO_NUM_13);
   //  gpio_pullup_en(GPIO_NUM_13);
+#ifndef FORUPDATE
   gpio_pulldown_en(GPIO_NUM_13);
   esp_err_t  err = gpio_isr_handler_add(GPIO_NUM_13, &detectsMovement, (void *) 13);
   if (err != ESP_OK) {
@@ -515,43 +578,60 @@ void setup()
   if (err != ESP_OK) {
     Serial.printf("set intr type failed with error 0x%x \r\n", err);
   }
+#endif
   secured_client.setInsecure();
   //setupOTA();
-  //startCameraServer();
+#ifdef USEWDT
+  lwdtFeed();
+  lwdTimer.attach_ms(LWD_TIMEOUT, lwdtcb);
+#endif  
+#ifdef USEWEBSERVER
+  startCameraServer();
+#endif
+#ifndef FORUPDATE
   isMotionDetected(currentfsize);
+#endif
   //TRIGGERtimer = millis();
   StartTasks();
 }
 
 
 
+#ifndef FORUPDATE
+void  sendPhotoTask()  {
+  Serial.println("+");
+  TBotNeedCamera = true;
+  xSemaphoreTake( CameraReady, portMAX_DELAY );
+  returnTheCamera(currentfsize);
+
+  if (debugToLed) {
+    flashState = LOW;
+    digitalWrite(FLASH_LED_PIN, flashState);
+  }
+  sendPhoto(chatId);
+  motionDetected = false;
+  TBotNeedCamera = false;
+  xSemaphoreGive( CameraReady );
+}
 
 void SendMotion() {
-  Serial.println("-");
+  // Serial.println("-");
   //if (TBotNeedCamera)return;
   //Serial.println("-");
-  if (motionDetected) {
-    Serial.println("+");
-    TBotNeedCamera = true;
-    xSemaphoreTake( CameraReady, portMAX_DELAY );
-    returnTheCamera(currentfsize);
+  if (motionDetected && !isUpdated) {
 
-    if (debugToLed) {
-      flashState = LOW;
-      digitalWrite(FLASH_LED_PIN, flashState);
-    }
-    sendPhoto(chatId);
-    motionDetected = false;
-    TBotNeedCamera = false;
-    xSemaphoreGive( CameraReady );
+    sendPhotoTask();
   }
 }
+#endif
 
 void loop()
 {
-
-
-  if (WiFi.status() != WL_CONNECTED)ESP.restart();
+#ifdef USEWDT
+lwdtFeed();
+#endif
+VerifyWifi();
+ // if (WiFi.status() != WL_CONNECTED)ESP.restart();
   if (isRestart)ESP.restart();
 
 
@@ -563,8 +643,9 @@ void loop()
 
 void codeForMotionTask( void * parameter )
 {
+#ifndef FORUPDATE
   for (;;) {
-    if (isswMotion)
+    if (isswMotion && !isUpdated)
       if (!TBotNeedCamera) {
         xSemaphoreTake( CameraReady, portMAX_DELAY );
         motionDetected =  isMotionDetected(currentfsize);
@@ -573,7 +654,11 @@ void codeForMotionTask( void * parameter )
         //if (motionDetected && !TBotNeedCamera) SendMotion();
       }
     delay(1);
+    #ifdef USEWDT
+    lwdtFeed();
+    #endif
   }
+#endif
 }
 
 void codeForTBotTask( void * parameter )
@@ -582,7 +667,9 @@ void codeForTBotTask( void * parameter )
 
 
   for (;;) {
+#ifndef FORUPDATE
     SendMotion();
+#endif
     if (millis() - bot_lasttime > BOT_MTBS)
     {
 
@@ -592,7 +679,7 @@ void codeForTBotTask( void * parameter )
       int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
       while (numNewMessages)
       {
-        SendMotion();
+        //SendMotion();
         Serial.print("numNewMessages=");
         Serial.println(numNewMessages);
         handleNewMessages(numNewMessages);
@@ -600,14 +687,23 @@ void codeForTBotTask( void * parameter )
         Serial.println ("NewMessages handled");
 
       }
+      /*
+        bool needToRestart = true;
+        for (int i = 0; i < 15; i++) {
+         if (!bot.getMe()) continue;
+        needToRestart = false;
+        break;
+        }
+        if (needToRestart) {
 
-      if (!bot.getMe()) {
-        Serial.println ("restart by bot.getMe()");   //ping
+        Serial.println ("reset by !bot.getMe()");
         ESP.restart();
-      }
-
+        }*/
       bot_lasttime = millis();
     }
     delay(1);
+    #ifdef USEWDT
+    lwdtFeed();
+    #endif
   }
 }

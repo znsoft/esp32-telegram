@@ -37,6 +37,7 @@ bool setupCamera()
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
+//  config.exposure_ctrl = 1;
   //init with high specs to pre-allocate larger buffers
   if (psramFound())
   {
@@ -80,6 +81,11 @@ bool setupCamera()
   s->set_vflip(s, 1);
   s->set_hmirror(s, 1);
 #endif
-
+      s->set_gain_ctrl(s, 1);                       
+      s->set_exposure_ctrl(s, 0); //0=manual
+      s->set_aec_value(s, 900);     // set exposure manually  (0-1200)
+      s->set_awb_gain(s, 1);
+       s->set_vflip(s, 1);  
+       s->set_brightness(s, 2); 
   return true;
 }
